@@ -2,6 +2,7 @@
 #include <queue>
 #include <array>
 #include <utility>
+#include <algorithm>
 
 #include "SFML/Graphics.hpp"
 #include "glm/glm.hpp"
@@ -14,9 +15,15 @@ using namespace sf;
 using namespace glm;
 
 constexpr float FovDegrees = 60.0f;
-mat4 ProjectionMatrix{ 0.0f };
-const Pixel BaseColor = { 0, 0, 255, 255 };
+mat4 PerspectiveProjectionMatrix{ 0.0f };
+mat4 OrthographicProjectionMatrix{ 0.0f };
 const Pixel DebugColor = { 255, 0, 0, 255 };
+
+struct Light
+{
+    vec3 direction;
+    vec4 color;
+};
 
 struct Triangle
 {
@@ -28,6 +35,7 @@ struct Model
 {
     vector<Triangle> triangles;
     mat4 modelToWorldTransform;
+    vec4 diffuseColor;
 
     void SetNormals()
     {
@@ -61,8 +69,10 @@ Point NdcToScreenSpace(const Bitmap& bitmap, const vec3& vertex)
     };
 }
 
-void DrawModel(Bitmap& bitmap, const Model& model)
+void DrawModel(Bitmap& bitmap, const Model& model, const vector<Light>& lights, const mat4& projectionMatrix, bool showWireframe = false)
 {
+    vector<Triangle> visibleTriangles;
+
     for (auto& triangle : model.triangles)
     {
         auto worldSpaceTriangle = Triangle{
@@ -80,30 +90,81 @@ void DrawModel(Bitmap& bitmap, const Model& model)
         auto& cameraSpaceTriangle = worldSpaceTriangle;
 
         auto ndcSpaceTriangle = Triangle{
-            DivideByW(ProjectionMatrix * cameraSpaceTriangle.vertices[0]),
-            DivideByW(ProjectionMatrix * cameraSpaceTriangle.vertices[1]),
-            DivideByW(ProjectionMatrix * cameraSpaceTriangle.vertices[2])
+            DivideByW(projectionMatrix * cameraSpaceTriangle.vertices[0]),
+            DivideByW(projectionMatrix * cameraSpaceTriangle.vertices[1]),
+            DivideByW(projectionMatrix * cameraSpaceTriangle.vertices[2])
+        };
+        ndcSpaceTriangle.normal = cameraSpaceTriangle.normal;
+
+        visibleTriangles.push_back(ndcSpaceTriangle);
+    }
+
+    std::sort(visibleTriangles.begin(), visibleTriangles.end(), [](const auto& t1, const auto& t2) {
+        float z1 = (t1.vertices[0].z + t1.vertices[1].z + t1.vertices[2].z) / 3.0f;
+        float z2 = (t2.vertices[0].z + t2.vertices[1].z + t2.vertices[2].z) / 3.0f;
+        return z1 > z2;
+    });
+
+    for (auto& triangle : visibleTriangles)
+    {
+        auto p1 = NdcToScreenSpace(bitmap, triangle.vertices[0]);
+        auto p2 = NdcToScreenSpace(bitmap, triangle.vertices[1]);
+        auto p3 = NdcToScreenSpace(bitmap, triangle.vertices[2]);
+
+        auto color = vec4{ 0.0f, 0.0f, 0.0f, 0.0f };
+        float ambientIntensity = 0.15f;
+        float directLightIntensity = 1.0f - ambientIntensity;
+        float perLightIntensity = lights.empty() ? 0.0f : directLightIntensity / lights.size();
+
+        color += model.diffuseColor * ambientIntensity;
+
+        for (auto& light : lights)
+        {
+            float cosAngIncidence = dot(normalize(triangle.normal), -normalize(light.direction));
+            if (cosAngIncidence < 0.0f)
+            {
+                cosAngIncidence = 0.0f;
+            }
+            else if (cosAngIncidence > 1.0f)
+            {
+                cosAngIncidence = 1.0f;
+            }
+            color += cosAngIncidence * perLightIntensity * light.color;
+        }
+
+        auto pixel = Pixel{
+            static_cast<uint8_t>(255 * color.x),
+            static_cast<uint8_t>(255 * color.y),
+            static_cast<uint8_t>(255 * color.z),
+            255
         };
 
-        auto p1 = NdcToScreenSpace(bitmap, ndcSpaceTriangle.vertices[0]);
-        auto p2 = NdcToScreenSpace(bitmap, ndcSpaceTriangle.vertices[1]);
-        auto p3 = NdcToScreenSpace(bitmap, ndcSpaceTriangle.vertices[2]);
+        bitmap.FillTriangle(p1, p2, p3, pixel);
 
-        bitmap.FillTriangle(p1, p2, p3, BaseColor);
-        bitmap.DrawTriangle(p1, p2, p3, DebugColor);
+        if (showWireframe)
+        {
+            bitmap.DrawTriangle(p1, p2, p3, DebugColor);
+        }
     }
 }
 
-void BuildPrejectionMatrix(mat4& matrix, const Bitmap& bitmap)
+void BuildPrejectionMatrix(const Bitmap& bitmap)
 {
     float r = tan(radians(FovDegrees / 2.0f));
     float t = r * (bitmap.height / static_cast<float>(bitmap.width));
+    PerspectiveProjectionMatrix[0][0] = 1.0f / r;
+    PerspectiveProjectionMatrix[1][1] = 1.0f / t;
+    PerspectiveProjectionMatrix[2][2] = -1.0f;
+    PerspectiveProjectionMatrix[2][3] = -1.0f;
+    PerspectiveProjectionMatrix[3][2] = -2.0f;
 
-    matrix[0][0] = 1.0f / r;
-    matrix[1][1] = 1.0f / t;
-    matrix[2][2] = -1.0f;
-    matrix[2][3] = -1.0f;
-    matrix[3][2] = -2.0f;
+    float ro = 2.0f;
+    float to = 2.0f;
+    OrthographicProjectionMatrix[0][0] = 1.0f / ro;
+    OrthographicProjectionMatrix[1][1] = 1.0f / to;
+    OrthographicProjectionMatrix[2][2] = -2.0f / (1000.0f - 1.0f);
+    OrthographicProjectionMatrix[3][2] = -(1000.0f + 1.0f) / (1000.0f - 1.0f);
+    OrthographicProjectionMatrix[3][3] = 1.0f;
 }
 
 void UpdateTextureFromBitmap(Texture& texture, const Bitmap& bitmap)
@@ -127,7 +188,7 @@ Pixel ColorToPixel(const Color& color)
 
 Model GenerateCylinder()
 {
-    int steps = 15;
+    int steps = 35;
     vector<vec3> circle;
 
     float angleStep = 360.0f / steps;
@@ -200,15 +261,24 @@ int main()
     screen.setSize(windowSize);
     screen.setTexture(&texture, false);
 
-    BuildPrejectionMatrix(ProjectionMatrix, bitmap);
+    BuildPrejectionMatrix(bitmap);
 
     Model model = GenerateCylinder();
     model.modelToWorldTransform = mat4{ 1.0f };
-    model.modelToWorldTransform[3] = { 0.0f, 0.0f, -5.0f, 1.0f };
+    model.modelToWorldTransform[3] = { 0.0f, 0.0f, -4.0f, 1.0f };
+    model.diffuseColor = { 1.0f, 1.0f, 1.0f, 1.0f };
     model.SetNormals();
 
     Clock clock;
-    float rotationSpeed = 15.0f;
+    float rotationSpeed = 30.0f;
+
+    vector<Light> lights;
+    lights.push_back({ { 1.0f, -0.25f, -1.0f }, { 1.0f, 0.0f, 0.0f, 1.0f } });
+    lights.push_back({ { -1.0f, -0.25f, -1.0f }, { 0.0f, 0.0f, 1.0f, 1.0f } });
+    lights.push_back({ { 0.0f, 0.25f, -1.0f }, { 0.0f, 1.0f, 0.0f, 1.0f } });
+
+    bool useOrtho = false; bool pWasPressed = false;
+    bool drawWireframe = false; bool wWasPressed = false;
 
     while (window.isOpen())
     {
@@ -237,10 +307,32 @@ int main()
             model.modelToWorldTransform = rotate(model.modelToWorldTransform, radians(rotationSpeed * dt), vec3{ 0.0f, 0.0f, 1.0f });
         }
 
+        bool pIsPressed = Keyboard::isKeyPressed(Keyboard::P);
+        if (!pWasPressed && pIsPressed)
+        {
+            useOrtho = !useOrtho;
+            pWasPressed = true;
+        }
+        else if (pWasPressed && !pIsPressed)
+        {
+            pWasPressed = false;
+        }
+
+        bool wIsPressed = Keyboard::isKeyPressed(Keyboard::W);
+        if (!wWasPressed && wIsPressed)
+        {
+            drawWireframe = !drawWireframe;
+            wWasPressed = true;
+        }
+        else if (wWasPressed && !wIsPressed)
+        {
+            wWasPressed = false;
+        }
+
         bitmap.Clear();
         window.clear();
 
-        DrawModel(bitmap, model);
+        DrawModel(bitmap, model, lights, useOrtho ? OrthographicProjectionMatrix : PerspectiveProjectionMatrix, drawWireframe);
 
         UpdateTextureFromBitmap(texture, bitmap);
         window.draw(screen);
