@@ -84,7 +84,7 @@ void DrawModel(Bitmap& bitmap, const Model& model, const vector<Light>& lights, 
 
         if (dot(worldSpaceTriangle.normal, vec3{ worldSpaceTriangle.vertices[0] }) >= 0.0f)
         {
-            continue;
+            //continue;
         }
 
         auto& cameraSpaceTriangle = worldSpaceTriangle;
@@ -159,7 +159,7 @@ void BuildPrejectionMatrix(const Bitmap& bitmap)
     PerspectiveProjectionMatrix[3][2] = -2.0f;
 
     float ro = 2.0f;
-    float to = 2.0f;
+    float to = 2.0f * (bitmap.height / static_cast<float>(bitmap.width));
     OrthographicProjectionMatrix[0][0] = 1.0f / ro;
     OrthographicProjectionMatrix[1][1] = 1.0f / to;
     OrthographicProjectionMatrix[2][2] = -2.0f / (1000.0f - 1.0f);
@@ -186,16 +186,17 @@ Pixel ColorToPixel(const Color& color)
     return { color.r, color.g, color.b, 255 };
 }
 
-Model GenerateCylinder()
+Model GenerateCylinder(int steps, float height, float radius)
 {
-    int steps = 35;
+    height /= 2.0f;
+
     vector<vec3> circle;
 
     float angleStep = 360.0f / steps;
     for (float angle = 0.0f; angle < 360.0f; angle += angleStep)
     {
         float r = radians(angle);
-        circle.push_back({ cos(r), 0.0f, sin(r) });
+        circle.push_back({ radius * cos(r), 0.0f, radius * sin(r) });
     }
 
     Model result;
@@ -207,30 +208,30 @@ Model GenerateCylinder()
         auto& p3 = circle[i + 1];
 
         result.triangles.push_back({{
-            {  p1.x, 1.0f, p1.z, 1.0f },
-            {  p3.x, 1.0f, p3.z, 1.0f },
-            {  p2.x, 1.0f, p2.z, 1.0f }
+            {  p1.x, height, p1.z, 1.0f },
+            {  p3.x, height, p3.z, 1.0f },
+            {  p2.x, height, p2.z, 1.0f }
         }});
 
         result.triangles.push_back({{
-            {  p3.x, -1.0f, p3.z, 1.0f },
-            {  p1.x, -1.0f, p1.z, 1.0f },
-            {  p2.x, -1.0f, p2.z, 1.0f }
+            {  p3.x, -height, p3.z, 1.0f },
+            {  p1.x, -height, p1.z, 1.0f },
+            {  p2.x, -height, p2.z, 1.0f }
         }});
     }
 
     auto addEdgeTriangle = [&](int i, int j)
     {
         result.triangles.push_back({{
-            { circle[i].x, -1.0f, circle[i].z, 1.0f },
-            { circle[i].x, 1.0f, circle[i].z, 1.0f },
-            { circle[j].x, 1.0f, circle[j].z, 1.0f }
+            { circle[i].x, -height, circle[i].z, 1.0f },
+            { circle[i].x,  height, circle[i].z, 1.0f },
+            { circle[j].x,  height, circle[j].z, 1.0f }
         }});
 
         result.triangles.push_back({{
-            { circle[i].x, -1.0f, circle[i].z, 1.0f },
-            { circle[j].x, 1.0f, circle[j].z, 1.0f },
-            { circle[j].x, -1.0f, circle[j].z, 1.0f }
+            { circle[i].x, -height, circle[i].z, 1.0f },
+            { circle[j].x,  height, circle[j].z, 1.0f },
+            { circle[j].x, -height, circle[j].z, 1.0f }
         }});
     };
 
@@ -248,7 +249,7 @@ int main()
     RenderWindow window(VideoMode(800, 600), "Software renderer");
 
     Vector2f windowSize = window.getView().getSize();
-    float screenPixelToBitmapPixelRatio = 3;
+    float screenPixelToBitmapPixelRatio = 5;
     Bitmap bitmap = Bitmap::New(
         static_cast<int>(windowSize.x / screenPixelToBitmapPixelRatio),
         static_cast<int>(windowSize.y / screenPixelToBitmapPixelRatio)
@@ -263,7 +264,7 @@ int main()
 
     BuildPrejectionMatrix(bitmap);
 
-    Model model = GenerateCylinder();
+    Model model = GenerateCylinder(13, 2, 1);
     model.modelToWorldTransform = mat4{ 1.0f };
     model.modelToWorldTransform[3] = { 0.0f, 0.0f, -4.0f, 1.0f };
     model.diffuseColor = { 1.0f, 1.0f, 1.0f, 1.0f };

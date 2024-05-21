@@ -203,7 +203,7 @@ int main()
 
     //glPolygonMode(GL_FRONT_AND_BACK, GL_LINE);
 
-    auto modelInfo = GeneratePyramid(5, 3, 10);
+    auto modelInfo = GeneratePyramid(5, 3, 8);
     auto mesh = CreateMesh(modelInfo);
 
     auto shader = Shader::LoadProgram("res/simple.vert", "res/simple.frag");
